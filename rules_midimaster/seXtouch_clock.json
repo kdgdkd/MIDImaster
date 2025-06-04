@@ -1,0 +1,37 @@
+{
+    "device_alias": {
+      "TPT_IN": "TPT" 
+    },
+    "input_mappings": [
+      {
+        "device_in": "TPT_IN",
+        "event_in": "start", 
+        "action": "play"     
+      },
+      {
+        "device_in": "TPT_IN",
+        "event_in": "stop",  
+        "action": "stop"    
+      },
+      {
+        "device_in": "TPT_IN",
+        "event_in": "continue", 
+        "action": "play"      
+      },
+      {
+        "device_in": "TPT_IN",
+        "event_in": "cc",
+        "ch_in": 0,
+        "value_1_in": 127,  
+        "action": "bpm",     
+        "bpm_scale": {
+          "range_in": [0, 127],  
+          "range_out": [60, 180] 
+                                 
+        }
+      }
+    ],
+    "clock_settings": {
+      "default_bpm": 125.0
+    }
+  }
