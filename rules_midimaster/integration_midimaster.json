@@ -1,0 +1,23 @@
+{
+    "device_alias": {
+      "TPT_in": "TPT" 
+    },
+    "clock_settings": {
+      "default_bpm": 180,
+      "device_out": "CLOCK" 
+    },
+    "input_mappings": [
+      {
+        "_comment": "Recibe MIDI Start en el puerto TPT y ejecuta la acción 'play'",
+        "device_in": "TPT_in", 
+        "event_in": "start",                 
+        "action": "play"
+      },
+      {
+        "_comment": "Recibe MIDI Stop en el puerto TPT y ejecuta la acción 'stop'",
+        "device_in": "TPT_in", 
+        "event_in": "stop",                  
+        "action": "stop"
+      }
+    ]
+  }
