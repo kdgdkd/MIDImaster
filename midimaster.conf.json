@@ -1,0 +1,13 @@
+{
+    "general_settings": {
+      "default_bpm": 120.0,
+      "default_virtual_port_name": "midimaster_OUT"
+    },
+    "osc_configuration": {
+      "enabled": true,
+      "listen_ip": "0.0.0.0",
+      "listen_port": 8000,
+      "send_ip": "127.0.0.1",
+      "send_port": 9000
+    }
+  }

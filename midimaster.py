@@ -12,11 +12,13 @@ import threading
 
 # --- UI Imports ---
 from prompt_toolkit import Application, HTML
-from prompt_toolkit.layout.containers import HSplit, Window # VSplit, ConditionalContainer (no usados por ahora)
+from prompt_toolkit.layout.containers import HSplit, Window
 from prompt_toolkit.layout.controls import FormattedTextControl
 from prompt_toolkit.layout.layout import Layout
 from prompt_toolkit.key_binding import KeyBindings
-# from prompt_toolkit.document import Document # No usado por ahora
+
+# --- OSC Imports ---
+from pythonosc import dispatcher, osc_server, udp_client
 
 # --- Global Configuration ---
 RULES_DIR_NAME = "rules_midimaster"
@@ -41,6 +43,12 @@ class PerformanceState:
 performance_state = PerformanceState()
 midi_clock_thread = None
 app_ui_instance = None
+bpm_update_signal = threading.Event()
+
+# --- OSC Configuration & State ---
+main_config = {}
+osc_client = None
+osc_server_thread = None
 
 # --- Mapeo de MIDI ---
 global_device_aliases = {}
@@ -112,6 +120,51 @@ def load_rule_file(fp: Path):
 
     return True # Indicar éxito
 
+# --- OSC and Main Config ---
+OSC_ADDRESSES = {
+    # Para recibir comandos
+    "PLAY": "/midimaster/play",
+    "STOP": "/midimaster/stop",
+    "PAUSE": "/midimaster/pause",
+    "SET_BPM": "/midimaster/bpm/set",
+    # Para enviar actualizaciones
+    "STATUS": "/midimaster/status",
+    "CURRENT_BPM": "/midimaster/bpm/current"
+}
+
+def load_main_config():
+    config_path = Path("./midimaster.conf.json")
+    # Valores por defecto en caso de que el fichero o las claves no existan
+    defaults = {
+        "general_settings": {
+            "default_bpm": 120.0,
+            "default_virtual_port_name": "midimaster_OUT"
+        },
+        "osc_configuration": {
+            "enabled": False,
+            "listen_ip": "0.0.0.0",
+            "listen_port": 8000,
+            "send_ip": "127.0.0.1",
+            "send_port": 9000
+        }
+    }
+    if not config_path.is_file():
+        print(f"Advertencia: Archivo de configuración '{config_path.name}' no encontrado. Usando valores por defecto.")
+        return defaults
+
+    try:
+        with open(config_path, 'r', encoding='utf-8') as f:
+            user_config = json.load(f)
+        
+        # Sobrescribir valores por defecto con los del usuario de forma segura
+        defaults["general_settings"].update(user_config.get("general_settings", {}))
+        defaults["osc_configuration"].update(user_config.get("osc_configuration", {}))
+        return defaults
+    except (json.JSONDecodeError, Exception) as e:
+        print(f"Error cargando '{config_path.name}': {e}. Usando valores por defecto.")
+        return defaults
+    
+
 # --- MIDI Clock Thread (con pequeño ajuste para timing) ---
 def midi_clock_sender():
     global SHUTDOWN_FLAG, performance_state
@@ -124,6 +177,11 @@ def midi_clock_sender():
         current_time = time.perf_counter()
 
         if performance_state.status == "PLAYING":
+            # Si se ha señalado un cambio de BPM, reiniciar la temporización
+            if bpm_update_signal.is_set():
+                last_pulse_time = 0
+                bpm_update_signal.clear()
+
             pulse_interval = 60.0 / (performance_state.bpm * PPQN)
             if last_pulse_time == 0: # Primer pulso después de Play o cambio de BPM
                 last_pulse_time = current_time
@@ -152,10 +210,8 @@ def midi_clock_sender():
 
 
 # --- Funciones de Control (set_bpm, send_midi_command, play/pause/stop, set_feedback_message) ---
-# (Estas funciones permanecen mayormente iguales a la propuesta anterior,
-#  asegúrate de que set_bpm actualice last_pulse_time = 0 en el hilo del clock si el BPM cambia en caliente)
+
 def set_bpm(new_bpm):
-    global last_pulse_time # Necesario si modificamos una global desde otra función que no es el hilo
     if performance_state.bpm_locked:
         set_feedback_message(f"BPM bloqueado en {performance_state.bpm:.2f}")
         return
@@ -166,13 +222,8 @@ def set_bpm(new_bpm):
     if prev_bpm != new_bpm_float:
         performance_state.bpm = new_bpm_float
         set_feedback_message(f"BPM: {prev_bpm:.2f} -> {performance_state.bpm:.2f}")
-        # Forzar recalculo del timing en el hilo del clock si está PLAYING
-        if performance_state.status == "PLAYING" and midi_clock_thread and midi_clock_thread.is_alive():
-             # Una forma de señalar al hilo que recalcule es resetear last_pulse_time
-             # Esto requiere acceso seguro o un event. No lo haremos directamente aquí por simplicidad,
-             # el hilo de clock ya lo recalcula basado en el nuevo BPM.
-             # El ajuste de last_pulse_time = 0 al inicio del play o cuando bpm cambia es crucial.
-             pass
+        bpm_update_signal.set()
+        send_osc_message(OSC_ADDRESSES["CURRENT_BPM"], new_bpm_float)
 
 
 def send_midi_command(command_type):
@@ -182,8 +233,7 @@ def send_midi_command(command_type):
             port.send(msg)
         except Exception: pass
 
-def play_clock():
-    global last_pulse_time # Si el hilo de clock usa esta global
+def play_clock(*args):
     if performance_state.status == "STOPPED":
         send_midi_command('start')
         set_feedback_message("PLAYING")
@@ -191,24 +241,50 @@ def play_clock():
         send_midi_command('continue')
         set_feedback_message("PLAYING (Continuado)")
     performance_state.status = "PLAYING"
-    # last_pulse_time = 0 # Resetear para el hilo de clock
+    bpm_update_signal.set()
+    send_osc_message(OSC_ADDRESSES["STATUS"], "PLAYING")
 
-def pause_clock():
+def pause_clock(*args):
     if performance_state.status == "PLAYING":
         send_midi_command('stop') 
         performance_state.status = "PAUSED"
         set_feedback_message("PAUSED")
+        send_osc_message(OSC_ADDRESSES["STATUS"], "PAUSED")
 
-def stop_clock():
+def stop_clock(*args):
     send_midi_command('stop')
     performance_state.status = "STOPPED"
     set_feedback_message("STOPPED")
-    # last_pulse_time = 0 # Resetear para el hilo de clock
-
+    send_osc_message(OSC_ADDRESSES["STATUS"], "STOPPED")
 
 def set_feedback_message(message):
     performance_state.last_feedback_message = message
     performance_state.feedback_message_time = time.time()
+
+
+# --- OSC Functions ---
+def send_osc_message(address, value):
+    """Envía un mensaje OSC si el cliente está configurado."""
+    if osc_client:
+        try:
+            osc_client.send_message(address, value)
+        except Exception as e:
+            # Evitar que un error de OSC detenga la aplicación
+            # print(f"Error enviando OSC: {e}") # Descomentar para depuración
+            pass
+
+def _handle_osc_bpm_set(address, *args):
+    """Manejador para recibir BPM vía OSC. Espera un float o int."""
+    if args and isinstance(args[0], (int, float)):
+        set_bpm(float(args[0]))
+
+def osc_server_handler(server):
+    """Función objetivo para el hilo del servidor OSC."""
+    try:
+        server.serve_forever()
+    except Exception as e:
+        if not SHUTDOWN_FLAG: # Solo mostrar error si no es un cierre intencionado
+             print(f"\nError en el servidor OSC: {e}")
 
 
 # --- UI Functions (prompt_toolkit) ---
@@ -453,16 +529,14 @@ def interactive_port_selector(available_ports, prompt_title="Selecciona puertos 
             else:
                 text_parts.append(f"  {line_content}\n")
         
-        # Unir todas las partes en una sola cadena HTML
         full_html_content = "".join(text_parts)
-        # Devolver un único objeto HTML que contenga toda la cadena formateada
         return HTML(full_html_content)
 
     control = FormattedTextControl(text=get_text_for_port_ui, focusable=True, key_bindings=kb_ports)
     port_selector_app = Application(layout=Layout(HSplit([Window(content=control)])), full_screen=False, mouse_support=False)
     
     print(f"\nMIDImaster ")
-    print(f"--- Selección de Puertos MIDI ---") # Esto se imprime antes de que la UI se inicie
+    print(f"--- Selección de Puertos MIDI ---") 
     selected_names = port_selector_app.run()
     
     if selected_names is None: 
@@ -470,39 +544,19 @@ def interactive_port_selector(available_ports, prompt_title="Selecciona puertos 
         return None 
     return selected_names
 
-    def get_text_for_port_ui():
-        fragments = [HTML(f"<b>{prompt_title}</b>\n(↑↓: navegar, Esp: marcar/desmarcar, Enter: confirmar, Ctrl+C: salir)\n")]
-        for i, port_name_str in enumerate(available_ports):
-            order_num = selected_ports_ordered.get(port_name_str)
-            marker = f"[{order_num}]" if order_num else "[ ]"
-            line_content = f"{marker} {port_name_str}"
-            if i == current_selection_index_ui:
-                fragments.append(HTML(f"<style bg='ansiblue' fg='ansiwhite'>> {line_content}</style>\n"))
-            else:
-                fragments.append(HTML(f"  {line_content}\n"))
-        return fragments
-
-    control = FormattedTextControl(text=get_text_for_port_ui, focusable=True, key_bindings=kb_ports)
-    port_selector_app = Application(layout=Layout(HSplit([Window(content=control)])), full_screen=False, mouse_support=False)
-    
-    print(f"\n--- Selección de Puertos MIDI ---")
-    selected_names = port_selector_app.run()
-    
-    if selected_names is None: # Cancelado con Ctrl+C
-        print("Selección de puertos cancelada.")
-        return None 
-    return selected_names # Puede ser una lista vacía si el usuario no seleccionó nada y dio Enter
-
-
 # --- Main Application ---
 def main():
     global SHUTDOWN_FLAG, performance_state, midi_clock_thread, app_ui_instance
-    global global_device_aliases, input_mappings # Necesario para que load_rule_file funcione
+    global global_device_aliases, input_mappings, main_config, osc_client, osc_server_thread
+
+    main_config = load_main_config()
+    # Actualizar el BPM por defecto desde la configuración
+    performance_state.bpm = main_config.get("general_settings", {}).get("default_bpm", DEFAULT_BPM)
 
     parser = argparse.ArgumentParser(prog=Path(sys.argv[0]).name, description="midimaster - MIDI Beat Clock Maestro")
     parser.add_argument("rule_file", nargs='?', default=None, help=f"Archivo de reglas JSON opcional de './{RULES_DIR_NAME}/'.")
-    parser.add_argument("--virtual-ports", action="store_true", help="Activa puerto MIDI virtual de SALIDA (nombre por defecto: midimaster_OUT).")
-    parser.add_argument("--vp-out", type=str, default="midimaster_OUT", metavar="NOMBRE", help="Nombre para el puerto virtual de SALIDA.")
+    parser.add_argument("--virtual-ports", action="store_true", help="Activa puerto MIDI virtual de SALIDA.")
+    parser.add_argument("--vp-out", type=str, default=main_config.get("general_settings", {}).get("default_virtual_port_name"), metavar="NOMBRE", help="Nombre para el puerto virtual de SALIDA.")
     parser.add_argument("--list-ports", action="store_true", help="Lista puertos MIDI y sale.")
     args = parser.parse_args()
 
@@ -600,9 +654,36 @@ def main():
 
     if not performance_state.output_ports:
         print("Advertencia: No hay puertos de salida activos. El clock no se enviará a ningún destino MIDI.")
-        # Decidir si continuar o salir. Para un master clock, es poco útil sin salidas.
-        # Pero podría ser útil para controlar la UI y ver el BPM, o si se usa solo para mapeos internos (no es el caso aquí).
-        # Por ahora, permitimos continuar, el usuario verá "Salida: Ninguno".
+
+    # Iniciar cliente y servidor OSC si está habilitado
+    osc_config = main_config.get("osc_configuration", {})
+    osc_server_object = None # Variable para el objeto servidor, para poder acceder a él en 'finally'
+    if osc_config.get("enabled"):
+        # Configurar cliente OSC (envío)
+        send_ip = osc_config.get("send_ip", "127.0.0.1")
+        send_port = osc_config.get("send_port", 9000)
+        osc_client = udp_client.SimpleUDPClient(send_ip, send_port)
+        print(f"OSC: Enviando actualizaciones a {send_ip}:{send_port}")
+
+        # Configurar servidor OSC (escucha)
+        disp = dispatcher.Dispatcher()
+        disp.map(OSC_ADDRESSES["PLAY"], play_clock)
+        disp.map(OSC_ADDRESSES["STOP"], stop_clock)
+        disp.map(OSC_ADDRESSES["PAUSE"], pause_clock)
+        disp.map(OSC_ADDRESSES["SET_BPM"], _handle_osc_bpm_set)
+
+        listen_ip = osc_config.get("listen_ip", "0.0.0.0")
+        listen_port = osc_config.get("listen_port", 8000)
+        
+        try:
+            # Usamos el módulo 'osc_server' para crear la instancia
+            osc_server_object = osc_server.ThreadingOSCUDPServer((listen_ip, listen_port), disp)
+            osc_server_thread = threading.Thread(target=osc_server_handler, args=(osc_server_object,), daemon=True)
+            osc_server_thread.start()
+            print(f"OSC: Escuchando comandos en {listen_ip}:{listen_port}")
+        except Exception as e:
+            print(f"Error fatal iniciando servidor OSC en {listen_ip}:{listen_port} - {e}")
+            print("La funcionalidad de recepción OSC estará desactivada.")
 
     # Iniciar hilo de clock MIDI
     midi_clock_thread = threading.Thread(target=midi_clock_sender, daemon=True)
@@ -671,6 +752,13 @@ def main():
     finally:
         SHUTDOWN_FLAG = True 
         print("\nCerrando midimaster...")
+
+        # Apagar servidor OSC
+        if osc_server_object:
+            osc_server_object.shutdown()
+        if osc_server_thread and osc_server_thread.is_alive():
+            osc_server_thread.join(timeout=0.2)
+            print("Servidor OSC detenido.")
         if midi_clock_thread and midi_clock_thread.is_alive():
             midi_clock_thread.join(timeout=0.2) # Reducir timeout para cierre más rápido
         

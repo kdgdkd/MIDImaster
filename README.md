@@ -1,60 +1,91 @@
 # MIDImaster
 
-
 MIDImaster is a command-line tool with a Terminal User Interface (TUI) designed to be a flexible and configurable MIDI Beat Clock master. It allows you to send MIDI clock signals to multiple outputs (physical and/or virtual) and control tempo (BPM) and transport (Play/Pause/Stop) both interactively and via incoming MIDI messages defined in JSON rule files.
-
 
 ## Key Features
 
+- **MIDI Beat Clock Generator:** Sends clock, start, stop, and continue messages to selected MIDI output ports.
 
-*   **MIDI Beat Clock Generator:** Sends `clock`, `start`, `stop`, and `continue` messages to selected MIDI output ports.
-*   **Interactive BPM Control:**
-    *   Adjust BPM via direct numeric input (e.g., `120`).
-    *   Increment/decrement BPM with `+` and `-` keys.
-    *   Lock BPM to prevent accidental changes.
-*   **Transport Controls:**
-    *   Play, Pause, Stop via keyboard shortcuts.
-*   **MIDI Port Management:**
-    *   Interactive selector for physical MIDI output ports.
-    *   Support for creating virtual MIDI output ports (ideal for routing to DAWs or other applications on the same system).
-    *   Listing of available MIDI ports.
-*   **Rule-Based Incoming MIDI Mapping:**
-    *   Load JSON configuration files from the `rules_midimaster/` directory.
-    *   Define aliases for MIDI devices for easier configuration.
-    *   Map incoming MIDI messages (Note On/Off, CC, Program Change, Start, Stop, etc.) from specific devices to internal actions such as:
-        *   Play, Stop, Pause.
-        *   Adjust BPM (with linear scaling option for CC messages).
-*   **Terminal User Interface (TUI):**
-    *   Displays current status (output ports, clock state, BPM).
-    *   Provides feedback for user actions.
-    *   Built with `prompt_toolkit`.
-*   **Persistent Configuration (Partial):**
-    *   Default BPM can be set in the JSON rule file.
-    *   Default output port can be suggested from the rule file.
+- **Interactive BPM Control:**
+  
+  - Adjust BPM via direct numeric input (e.g., 120).
+  
+  - Increment/decrement BPM with + and - keys.
+  
+  - Lock BPM to prevent accidental changes.
+
+- **Transport Controls:**
+  
+  - Play, Pause, Stop via keyboard shortcuts.
+
+- **MIDI Port Management:**
+  
+  - Interactive selector for physical MIDI output ports.
+  
+  - Support for creating virtual MIDI output ports (ideal for routing to DAWs or other applications on the same system).
+  
+  - Listing of available MIDI ports.
+
+- **Rule-Based Incoming MIDI Mapping:**
+  
+  - Load JSON configuration files from the rules_midimaster/ directory.
+  
+  - Define aliases for MIDI devices for easier configuration.
+  
+  - Map incoming MIDI messages (Note On/Off, CC, Program Change, Start, Stop, etc.) from specific devices to internal actions such as:
+    
+    - Play, Stop, Pause.
+    
+    - Adjust BPM (with linear scaling option for CC messages).
+
+- **Terminal User Interface (TUI):**
+  
+  - Displays current status (output ports, clock state, BPM).
+  
+  - Provides feedback for user actions.
+  
+  - Built with prompt_toolkit.
+
+- **Persistent Configuration (Partial):**
+  
+  - Default BPM can be set in the JSON rule file.
+  
+  - Default output port can be suggested from the rule file.
 
 ## Requirements
 
-*   Python 3.6+
-*   Python Libraries:
-    *   `mido` (for MIDI communication)
-    *   `prompt_toolkit` (for the terminal user interface)
-*   **For virtual MIDI ports:**
-    *   **Windows:** A MIDI loopback driver like [loopMIDI](https://www.tobias-erichsen.de/software/loopmidi.html).
-    *   **macOS:** The built-in "IAC Driver" (activated in "Audio MIDI Setup").
-    *   **Linux:** The `snd-virmidi` kernel module (usually available, may require `modprobe snd-virmidi`).
+- Python 3.6+
+
+- Python Libraries:
+  
+  - mido (for MIDI communication)
+  
+  - prompt_toolkit (for the terminal user interface)
+
+- **For virtual MIDI ports:**
+  
+  - **Windows:** A MIDI loopback driver like [loopMIDI](https://www.google.com/url?sa=E&q=https%3A%2F%2Fwww.tobias-erichsen.de%2Fsoftware%2Floopmidi.html).
+  
+  - **macOS:** The built-in "IAC Driver" (activated in "Audio MIDI Setup").
+  
+  - **Linux:** The snd-virmidi kernel module (usually available, may require modprobe snd-virmidi).
 
 ## Installation
 
-1.  **Clone the repository or download `midimaster.py`**.
-2.  **Install dependencies:**
-    ```bash
-    pip install mido prompt_toolkit
-    ```
-3.  **Create the rules directory (optional, but recommended for using mappings):**
-    In the same directory where `midimaster.py` is located, create a folder named `rules_midimaster`:
-    ```bash
-    mkdir rules_midimaster
-    ```
+1. **Clone the repository or download midimaster.py**.
+
+2. **Install dependencies:**
+
+```
+pip install mido prompt_toolkit
+```
+
+1. **Create the rules directory (optional, but recommended for using mappings):**  
+   In the same directory where midimaster.py is located, create a folder named rules_midimaster:
+
+```
+mkdir rules_midimaster
+```
 
 ## Usage
 
@@ -62,11 +93,9 @@ MIDImaster is a command-line tool with a Terminal User Interface (TUI) designed 
 
 To start MIDImaster:
 
-```bash
+```
 python midimaster.py
-````
-
-
+```
 
 Upon startup, if physical MIDI output ports are available, you will be presented with an interactive selector to choose where to send the clock.
 
@@ -143,8 +172,6 @@ The basic structure of a rule file is:
   ]
 }
 ```
-
-
 
 #### device_alias Section
 
@@ -255,8 +282,6 @@ Each mapping object can contain:
 ]
 ```
 
-
-
 ## Full Rule File Example
 
 Filename: rules_midimaster/my_live_setup.json
@@ -301,17 +326,11 @@ Filename: rules_midimaster/my_live_setup.json
 }
 ```
 
-content_copydownload
-
-Use code [with caution](https://support.google.com/legal/answer/13505487).Json
-
 To use this file:
 
 ```
 python midimaster.py my_live_setup
 ```
-
-
 
 ## Troubleshooting
 
