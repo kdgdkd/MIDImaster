@@ -346,6 +346,10 @@ python midimaster.py my_live_setup
 
 - **The TUI looks strange or is unresponsive**: It might be a compatibility issue with your terminal. Try a different terminal or ensure prompt_toolkit is up to date.
 
+## License
+
+GNU AGPLv3 License. See LICENSE file.
+
 ## Contributions
 
 Contributions, ideas, and bug reports are welcome. Please open an issue on the GitHub repository.

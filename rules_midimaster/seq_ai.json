@@ -1,0 +1,98 @@
+{
+    // 1. CONFIGURACIÓN: Adapta estos alias a tus dispositivos.
+    //    'CLOCK_in' debe coincidir con el alias del puerto que envía el reloj MIDI (START/STOP/CLOCK).
+    //    'mi_sinte_bajo' y 'mi_sinte_pads' deben apuntar a los sintetizadores o instrumentos que quieras usar.
+    "device_alias": {
+      "CLOCK_in": "CLOCK",      // EJEMPLO: "loopMIDI Port" o "IAC Driver"
+      "mi_sinte_bajo": "SinteBajo",      // EJEMPLO: "Arturia MicroFreak"
+      "mi_sinte_pads": "SintePads"       // EJEMPLO: "Roland JV-1080"
+    },
+  
+    "sequencer": [
+      // --- SECUENCIADOR 1: LÍNEA DE BAJO (Canal 1) ---
+      // Toca las notas raíz de la progresión con un ritmo de corcheas.
+      {
+        "_comment": "Línea de bajo para la estrofa (Cm, Ab, Eb, G)",
+        "clock_in": "CLOCK_in",
+        "device_out": "mi_sinte_bajo",
+        "channel_out": 1,
+        "step_total": 64,       // 4 compases de 16 pasos cada uno
+        "step_duration": "1/16",
+  
+        // Notas raíz de cada compás (C2, Ab2, Eb2, G2)
+        "seq_note": [
+          // Compás 1: Cm
+          36, 36, 36, 36, 36, 36, 36, 36, 36, 36, 36, 36, 36, 36, 36, 36,
+          // Compás 2: Ab
+          44, 44, 44, 44, 44, 44, 44, 44, 44, 44, 44, 44, 44, 44, 44, 44,
+          // Compás 3: Eb
+          39, 39, 39, 39, 39, 39, 39, 39, 39, 39, 39, 39, 39, 39, 39, 39,
+          // Compás 4: G
+          43, 43, 43, 43, 43, 43, 43, 43, 43, 43, 43, 43, 43, 43, 43, 43
+            // Compás 5: E
+            40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40,
+            // Compás 6: A
+            45, 45, 45, 45, 45, 45, 45, 45, 45, 45, 45, 45, 45, 45, 45, 45,
+            // Compás 7: D
+            38, 38, 38, 38, 38, 38, 38, 38, 38, 38, 38, 38, 38, 38, 38, 38,
+            // Compás 8: F#
+            42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42
+          
+        ],
+        // Ritmo de corcheas (toca en cada 'tic', salta un 'tac')
+        "seq_gate": [
+          1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, // Compás 1
+          1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, // Compás 2
+          1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, // Compás 3
+          1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0  // Compás 4
+        ],
+        "seq_velocity": 95,
+        "seq_note_length": 0.8 // Un poco staccato para definir el ritmo
+      },
+  
+      // --- SECUENCIADOR 2: PADS DE ACORDES (Canal 2) ---
+      // Toca los acordes completos de forma sostenida durante cada compás.
+      {
+        "_comment": "Pads de acordes para la estrofa (Cm, Ab, Eb, G)",
+        "clock_in": "CLOCK_in",
+        "device_out": "mi_sinte_pads",
+        "channel_out": 2,
+        "step_total": 64,
+        "step_duration": "1/16",
+  
+        // Solo se activa una nota al principio de cada compás
+        "seq_gate": [
+          1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // Compás 1
+          1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // Compás 2
+          1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // Compás 3
+          1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0  // Compás 4
+        ],
+        
+        // La nota raíz que usará la función chord()
+        "seq_root_note": [
+          60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, // C4
+          56, 56, 56, 56, 56, 56, 56, 56, 56, 56, 56, 56, 56, 56, 56, 56, // Ab3
+          63, 63, 63, 63, 63, 63, 63, 63, 63, 63, 63, 63, 63, 63, 63, 63, // Eb4
+          55, 55, 55, 55, 55, 55, 55, 55, 55, 55, 55, 55, 55, 55, 55, 55  // G3
+        ],
+  
+        // El tipo de acorde que generará chord()
+        "seq_scale_name": [
+          "minor_triad", "minor_triad", "minor_triad", "minor_triad", "minor_triad", "minor_triad", "minor_triad", "minor_triad", "minor_triad", "minor_triad", "minor_triad", "minor_triad", "minor_triad", "minor_triad", "minor_triad", "minor_triad",
+          "major_triad", "major_triad", "major_triad", "major_triad", "major_triad", "major_triad", "major_triad", "major_triad", "major_triad", "major_triad", "major_triad", "major_triad", "major_triad", "major_triad", "major_triad", "major_triad",
+          "major_triad", "major_triad", "major_triad", "major_triad", "major_triad", "major_triad", "major_triad", "major_triad", "major_triad", "major_triad", "major_triad", "major_triad", "major_triad", "major_triad", "major_triad", "major_triad",
+          "major_triad", "major_triad", "major_triad", "major_triad", "major_triad", "major_triad", "major_triad", "major_triad", "major_triad", "major_triad", "major_triad", "major_triad", "major_triad", "major_triad", "major_triad", "major_triad"
+        ],
+        
+        "seq_velocity": 70,
+        "seq_note_length": 15.9, // Casi la duración completa del compás (16 pasos)
+  
+        // El bloque 'output' genera el acorde usando los arrays de arriba
+        "output": [
+          {
+            "value_1_out": "chord(root_note_out, 3, scale_out)"
+          }
+        ]
+      }
+    ]
+  }
