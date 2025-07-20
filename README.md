@@ -1,6 +1,6 @@
 # MIDImaster
 
-MIDImaster is a command-line tool with a Terminal User Interface (TUI) designed to be a flexible and configurable MIDI Beat Clock master. It allows you to send MIDI clock signals to multiple outputs (physical and/or virtual) and control tempo (BPM) and transport (Play/Pause/Stop) both interactively and via incoming MIDI messages defined in JSON rule files.
+MIDImaster is a command-line tool with a Terminal User Interface (TUI) designed to be a flexible and configurable MIDI Beat Clock master. It allows you to send MIDI clock signals to multiple outputs (physical and/or virtual) and control tempo (BPM) and transport (Play/Pause/Stop) both through the terminal and via incoming MIDI messages.
 
 ## Key Features
 
@@ -8,7 +8,7 @@ MIDImaster is a command-line tool with a Terminal User Interface (TUI) designed 
 
 - **Interactive BPM Control:**
   
-  - Adjust BPM via direct numeric input (e.g., 120).
+  - Adjust BPM via direct numeric input (three digits, e.g., 120).
   
   - Increment/decrement BPM with + and - keys.
   
