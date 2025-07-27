@@ -52,7 +52,7 @@ osc_server_thread = None
 
 # --- Mapeo de MIDI ---
 global_device_aliases = {}
-input_mappings = []
+midi_filters = []
 
 # --- Helper Functions ---
 def signal_handler(sig, frame):
@@ -82,12 +82,12 @@ def _load_json_file_content(filepath: Path):
     return None
 
 def load_rule_file(fp: Path):
-    global global_device_aliases, input_mappings, performance_state
+    global global_device_aliases, midi_filters, performance_state
     content = _load_json_file_content(fp)
     if not content or not isinstance(content, dict): return False # Indicar fallo
 
     devices = content.get("device_alias", {})
-    mappings = content.get("input_mappings", [])
+    mappings = content.get("midi_filter", [])
     clock_settings = content.get("clock_settings", {}) # Cargar clock_settings
 
     if isinstance(devices, dict):
@@ -100,7 +100,7 @@ def load_rule_file(fp: Path):
             if isinstance(m_config, dict):
                 m_config["_source_file"] = fp.name
                 m_config["_map_id_in_file"] = i
-                input_mappings.append(m_config)
+                midi_filters.append(m_config)
     
     # Aplicar clock_settings
     if isinstance(clock_settings, dict):
@@ -376,7 +376,15 @@ def build_key_bindings():
     
     @kb.add('enter')
     def _(event):
-        if performance_state.status == "PLAYING" or performance_state.status == "PAUSED":
+        if performance_state.bpm_input_buffer:
+            try:
+                new_bpm_val = float(performance_state.bpm_input_buffer)
+                set_bpm(new_bpm_val)
+            except ValueError:
+                set_feedback_message(f"Entrada BPM inválida: {performance_state.bpm_input_buffer}")
+            finally:
+                performance_state.bpm_input_buffer = ""
+        elif performance_state.status == "PLAYING" or performance_state.status == "PAUSED":
             stop_clock()
             # Si se quiere que Enter desde Pausa también reinicie:
             # if performance_state.status == "PAUSED": play_clock() # Esto lo reiniciaría
@@ -395,12 +403,34 @@ def build_key_bindings():
             
     return kb
 
+def global_midi_callback(msg, port_name):
+    """
+    Despachador global de callbacks MIDI.
+    Maneja los comandos de transporte por defecto y pasa el resto al procesador de reglas.
+    """
+    # Manejo de comandos de transporte MIDI universales
+    if msg.type == 'start':
+        play_clock()
+        return # Consumir el evento para evitar que sea procesado por las reglas JSON
+    elif msg.type == 'stop':
+        stop_clock()
+        return
+    elif msg.type == 'continue':
+        # play_clock() ya gestiona la reanudación desde PAUSED
+        play_clock()
+        return
+
+    # Si no es un comando de transporte, se pasa al procesador de mapeos JSON
+    process_midi_mappings(msg, port_name)
+
+
 # --- Procesamiento de Mapeos MIDI (igual que antes) ---
+
 def process_midi_mappings(msg, port_name):
     global performance_state
-    if not input_mappings: return
+    if not midi_filters: return
 
-    for mapping in input_mappings:
+    for mapping in midi_filters: 
         dev_alias = mapping.get("device_in")
         if dev_alias:
             dev_substr = global_device_aliases.get(dev_alias, dev_alias)
@@ -443,6 +473,9 @@ def process_midi_mappings(msg, port_name):
         elif action == "stop": stop_clock()
         elif action == "pause":
             if performance_state.status == "PLAYING": pause_clock()
+        elif action == "continue": # Bloque añadido
+            if performance_state.status == "PAUSED":
+                play_clock()
         elif action == "bpm" and msg.type == "control_change":
             cc_val = msg.value
             scale_config = mapping.get("bpm_scale") 
@@ -458,9 +491,9 @@ def process_midi_mappings(msg, port_name):
                 set_bpm(scaled_bpm)
             else:
                 set_bpm(cc_val) 
-        break 
+        # break 
 
-# --- UI para selección de puertos (adaptado de MIDImod) ---
+
 # --- UI para selección de puertos (adaptado de MIDImod) ---
 def interactive_port_selector(available_ports, prompt_title="Selecciona puertos de SALIDA para el clock"):
     if not available_ports:
@@ -547,7 +580,7 @@ def interactive_port_selector(available_ports, prompt_title="Selecciona puertos 
 # --- Main Application ---
 def main():
     global SHUTDOWN_FLAG, performance_state, midi_clock_thread, app_ui_instance
-    global global_device_aliases, input_mappings, main_config, osc_client, osc_server_thread
+    global global_device_aliases, midi_filters, main_config, osc_client, osc_server_thread
 
     main_config = load_main_config()
     # Actualizar el BPM por defecto desde la configuración
@@ -568,64 +601,52 @@ def main():
         return
 
     RULES_DIR.mkdir(parents=True, exist_ok=True)
-    json_loaded_successfully = False
+
+
+
+    selected_port_names = []
+    port_name_from_json = None
+
     if args.rule_file:
         file_path = RULES_DIR / f"{args.rule_file}.json"
-        json_loaded_successfully = load_rule_file(file_path)
-        if json_loaded_successfully:
+        if load_rule_file(file_path):
             print(f"Archivo de reglas '{file_path.name}' cargado.")
-            # performance_state.bpm ya se actualizó en load_rule_file si default_bpm estaba presente
-    
-    # Seleccionar puertos de salida físicos si no es modo virtual exclusivo O si se quiere añadir a virtual
-    selected_physical_port_names = []
-    # if not args.virtual_ports or (args.virtual_ports and not json_setting_prevents_physical_selection): # Lógica más compleja aquí
-    # Por ahora, siempre ofrecemos seleccionar puertos físicos, que se sumarán al virtual si está activo.
-    
-    available_physical_outputs = mido.get_output_names()
-    if available_physical_outputs:
-        # Si hay un device_out por defecto en JSON y no se usa selector, se podría usar eso en lugar del selector.
-        # Pero si estamos aquí, es probable que queramos el selector.
-        # Si se carga un JSON con "device_out" y el usuario NO selecciona nada, ¿debería usarse el del JSON?
-        # Decisión: el selector interactivo tiene precedencia si se muestra.
-        
-        # No mostrar selector si solo se especifica --virtual-ports y no hay archivo de reglas con device_out,
-        # o si el archivo de reglas no indica un device_out físico.
-        # Simplificación: si no es virtual-ports exclusivo, o si hay puertos físicos disponibles, mostrar selector.
-        
-        # Mostrar selector si no estamos en modo SOLO virtual y hay puertos físicos
-        # O si estamos en modo virtual Y el usuario podría querer añadir salidas físicas ADEMÁS del virtual.
-        # Por ahora, vamos a mostrarlo si hay puertos físicos, y luego filtramos.
-        
-        print_port_selection_prompt = True
-        if args.virtual_ports and not available_physical_outputs : # Solo virtual y no hay físicos, no mostrar
-            print_port_selection_prompt = False
-        # Podríamos añadir lógica para no mostrarlo si un JSON ya define un device_out y el usuario no quiere cambiarlo.
+            # Intentar resolver el puerto desde el JSON antes de mostrar el selector
+            if hasattr(performance_state, 'default_device_out_alias_from_json'):
+                alias = performance_state.default_device_out_alias_from_json
+                dev_substr = global_device_aliases.get(alias, alias)
+                resolved_name = find_port_by_substring(mido.get_output_names(), dev_substr)
+                if resolved_name:
+                    port_name_from_json = resolved_name
+                    selected_port_names.append(port_name_from_json)
+                    print(f"Usando dispositivo de salida '{resolved_name}' definido en JSON.")
+                else:
+                    print(f"Advertencia: Dispositivo de salida por defecto '{alias}' del JSON no encontrado.")
 
-        if print_port_selection_prompt:
+    # Mostrar selector interactivo solo si el JSON no especificó un puerto válido
+    if not port_name_from_json:
+        available_physical_outputs = mido.get_output_names()
+        if available_physical_outputs:
             user_selected_names = interactive_port_selector(available_physical_outputs)
-            if user_selected_names is None: # Usuario canceló con Ctrl+C
+            if user_selected_names is None: # Usuario canceló
                 print("Saliendo de midimaster.")
                 return
-            if user_selected_names: # Si devolvió una lista (puede ser vacía)
-                selected_physical_port_names.extend(user_selected_names)
-
+            if user_selected_names:
+                selected_port_names.extend(user_selected_names)
 
     # Abrir puertos
-    opened_port_objects = [] # Usar una lista temporal para evitar modificar performance_state.output_ports directamente aquí
-
+    opened_port_objects = []
     if args.virtual_ports:
         try:
             vp_name = args.vp_out
-            port = mido.open_output(vp_name, virtual=True) 
+            port = mido.open_output(vp_name, virtual=True)
             opened_port_objects.append(port)
-            performance_state.virtual_port_name = port.name 
+            performance_state.virtual_port_name = port.name
             print(f"Puerto virtual de salida '{port.name}' abierto.")
         except Exception as e:
             print(f"Error abriendo puerto virtual '{args.vp_out}': {e}")
-            print("Asegúrate de tener un backend MIDI que soporte creación/uso de puertos virtuales (ej. loopMIDI en Windows, o IAC en macOS).")
-            
-    for name in selected_physical_port_names:
-        # Evitar abrir el mismo puerto si el virtual tiene el mismo nombre que uno físico (improbable pero posible)
+
+    for name in selected_port_names:
         if performance_state.virtual_port_name and name == performance_state.virtual_port_name:
             continue
         try:
@@ -635,37 +656,20 @@ def main():
         except Exception as e:
             print(f"Error abriendo puerto físico '{name}': {e}")
 
-    # Si después de todo no hay puertos abiertos, y un JSON especificó un default_device_out_alias_from_json
-    if not opened_port_objects and hasattr(performance_state, 'default_device_out_alias_from_json'):
-        alias = performance_state.default_device_out_alias_from_json
-        dev_substr = global_device_aliases.get(alias, alias)
-        port_name_from_json = find_port_by_substring(mido.get_output_names(), dev_substr)
-        if port_name_from_json:
-            try:
-                port = mido.open_output(port_name_from_json)
-                opened_port_objects.append(port)
-                print(f"Puerto de salida físico '{port_name_from_json}' (de JSON) abierto.")
-            except Exception as e:
-                print(f"Error abriendo puerto físico '{port_name_from_json}' (de JSON): {e}")
-        else:
-            print(f"Advertencia: Dispositivo de salida por defecto '{alias}' del JSON no encontrado.")
-
-    performance_state.output_ports = opened_port_objects # Asignar finalmente
+    performance_state.output_ports = opened_port_objects
 
     if not performance_state.output_ports:
         print("Advertencia: No hay puertos de salida activos. El clock no se enviará a ningún destino MIDI.")
 
     # Iniciar cliente y servidor OSC si está habilitado
     osc_config = main_config.get("osc_configuration", {})
-    osc_server_object = None # Variable para el objeto servidor, para poder acceder a él en 'finally'
+    osc_server_object = None
     if osc_config.get("enabled"):
-        # Configurar cliente OSC (envío)
         send_ip = osc_config.get("send_ip", "127.0.0.1")
         send_port = osc_config.get("send_port", 9000)
         osc_client = udp_client.SimpleUDPClient(send_ip, send_port)
         print(f"OSC: Enviando actualizaciones a {send_ip}:{send_port}")
 
-        # Configurar servidor OSC (escucha)
         disp = dispatcher.Dispatcher()
         disp.map(OSC_ADDRESSES["PLAY"], play_clock)
         disp.map(OSC_ADDRESSES["STOP"], stop_clock)
@@ -676,7 +680,6 @@ def main():
         listen_port = osc_config.get("listen_port", 8000)
         
         try:
-            # Usamos el módulo 'osc_server' para crear la instancia
             osc_server_object = osc_server.ThreadingOSCUDPServer((listen_ip, listen_port), disp)
             osc_server_thread = threading.Thread(target=osc_server_handler, args=(osc_server_object,), daemon=True)
             osc_server_thread.start()
@@ -689,45 +692,24 @@ def main():
     midi_clock_thread = threading.Thread(target=midi_clock_sender, daemon=True)
     midi_clock_thread.start()
 
-    # Iniciar hilo para escuchar MIDI IN si hay mapeos
+    # Abrir puertos de entrada MIDI con callbacks si hay mapeos
     midi_input_ports = {}
-    if input_mappings:
-        required_dev_aliases = set()
-        for m in input_mappings:
-            dev_in_alias = m.get("device_in")
-            if dev_in_alias:
-                required_dev_aliases.add(dev_in_alias)
+    if midi_filters:
+        required_dev_aliases = {m.get("device_in") for m in midi_filters if m.get("device_in")}
         
         for alias in required_dev_aliases:
             dev_substr = global_device_aliases.get(alias, alias)
             port_name = find_port_by_substring(mido.get_input_names(), dev_substr)
             if port_name and port_name not in midi_input_ports:
                 try:
-                    midi_input_ports[port_name] = mido.open_input(port_name)
+                    # Crear un callback que capture el nombre del puerto y lo envíe al despachador global
+                    callback_func = lambda msg, name=port_name: global_midi_callback(msg, name)
+                    port = mido.open_input(port_name, callback=callback_func)
+                    midi_input_ports[port_name] = port
                     print(f"Puerto de entrada '{port_name}' para mapeos abierto.")
                 except Exception as e:
                     print(f"Error abriendo puerto de entrada '{port_name}': {e}")
     
-    def midi_input_listener():
-        while not SHUTDOWN_FLAG:
-            active = False
-            for port_name, port_obj in midi_input_ports.items():
-                if port_obj and not port_obj.closed: # Verificar si el puerto está activo
-                    msg = port_obj.poll()
-                    if msg:
-                        process_midi_mappings(msg, port_name)
-                        active = True
-            if not active and midi_input_ports: # Si hay puertos definidos pero ninguno activo, pequeña pausa
-                 time.sleep(0.01)
-            elif not midi_input_ports: # No hay puertos de input, el hilo no necesita hacer mucho
-                 time.sleep(0.1)
-            else: # Hubo actividad o no hay puertos
-                 time.sleep(0.001)
-
-
-    if midi_input_ports:
-        midi_input_thread = threading.Thread(target=midi_input_listener, daemon=True)
-        midi_input_thread.start()
 
     status_window = Window(content=FormattedTextControl(text=get_status_text, focusable=False), height=4, style="bg:#444444 #ffffff")
     feedback_window = Window(content=FormattedTextControl(text=get_feedback_line_text, focusable=False), height=2, style="bg:#222222 #aaaaaa")
