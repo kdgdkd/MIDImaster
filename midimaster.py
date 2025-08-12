@@ -18,7 +18,14 @@ from prompt_toolkit.layout.layout import Layout
 from prompt_toolkit.key_binding import KeyBindings
 
 # --- OSC Imports ---
-from pythonosc import dispatcher, osc_server, udp_client
+try:
+    from pythonosc import dispatcher, osc_server, udp_client
+    _hasOSC = True
+except ImportError:
+    _hasOSC = False
+'''
+_hasOSC = False
+'''
 
 # --- Global Configuration ---
 RULES_DIR_NAME = "rules_midimaster"
@@ -664,7 +671,7 @@ def main():
     # Iniciar cliente y servidor OSC si está habilitado
     osc_config = main_config.get("osc_configuration", {})
     osc_server_object = None
-    if osc_config.get("enabled"):
+    if _hasOSC and osc_config.get("enabled"):
         send_ip = osc_config.get("send_ip", "127.0.0.1")
         send_port = osc_config.get("send_port", 9000)
         osc_client = udp_client.SimpleUDPClient(send_ip, send_port)
