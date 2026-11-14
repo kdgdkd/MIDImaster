@@ -1,0 +1,27 @@
+{
+    "device_alias": {
+      "mi_teclado_master": "Arturia KeyStep", 
+      "mi_sintetizador_hardware": "Volca Beats"    
+    },
+    "input_mappings": [
+      {
+        "device_in": "mi_teclado_master",
+        "event_in": "start",
+        "action": "play"
+      },
+      {
+        "device_in": "mi_teclado_master",
+        "event_in": "stop",
+        "action": "stop"
+      },
+      {
+        "device_in": "mi_teclado_master",
+        "event_in": "continue",
+        "action": "play" 
+      }
+    ],
+    "clock_settings": {
+      "default_bpm": 128.0,
+      "device_out": "mi_sintetizador_hardware" 
+    }
+  }

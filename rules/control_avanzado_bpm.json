@@ -1,0 +1,46 @@
+{
+    "device_alias": {
+      "mi_controlador_knobs": "X-TOUCH MINI", // Reemplaza con tu controlador
+      "puerto_virtual_daw": "LoopMIDI Port 1" // Si usas un cable MIDI virtual para enviar a tu DAW
+    },
+    "input_mappings": [
+      // Control de Transporte con Notas (ej. pads de un controlador)
+      {
+        "device_in": "mi_controlador_knobs",
+        "event_in": "note_on", // Solo reacciona al presionar la nota
+        "ch_in": 9,           // Canal MIDI 10 (común para percusión/control)
+        "value_1_in": 36,     // Nota C1 (Do1)
+        "action": "play"
+      },
+      {
+        "device_in": "mi_controlador_knobs",
+        "event_in": "note_on",
+        "ch_in": 9,
+        "value_1_in": 37,     // Nota C#1 (Do#1)
+        "action": "stop"
+      },
+      {
+        "device_in": "mi_controlador_knobs",
+        "event_in": "note_on",
+        "ch_in": 9,
+        "value_1_in": 38,     // Nota D1 (Re1)
+        "action": "pause"     // Si está en PLAYING, pausa.
+      },
+      // Control de BPM con un CC
+      {
+        "device_in": "mi_controlador_knobs",
+        "event_in": "cc",
+        "ch_in": 0,           // Canal MIDI 1
+        "value_1_in": 74,     // Número del CC (ej. CC #74, a menudo "Brightness" o un fader libre)
+        "action": "bpm",
+        "bpm_scale": {
+          "range_in": [0, 127],  // El valor del CC (0-127)
+          "range_out": [80, 160] // Mapea a BPM entre 80 y 160
+        }
+      }
+    ],
+    "clock_settings": {
+      "default_bpm": 120.0,
+      "device_out": "puerto_virtual_daw" // Enviar clock a un puerto virtual
+    }
+  }

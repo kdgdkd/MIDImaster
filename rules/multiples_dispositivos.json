@@ -1,0 +1,44 @@
+{
+    "device_alias": {
+      "pedal_midi": "FCB1010",         // Tu pedalera MIDI
+      "teclado_pequeno": "nanoKEY2",    // Un teclado pequeño
+      "sintetizador_drum": "TR-8S",       // Salida física 1
+      "daw_sync_port": "MIDImaster_Virtual" // Salida virtual (si usas --virtual-ports con este nombre)
+    },
+    "input_mappings": [
+      // Control de transporte desde pedalera
+      {
+        "device_in": "pedal_midi",
+        "event_in": "pc",       // Mensaje Program Change
+        "ch_in": 15,            // Canal 16
+        "value_1_in": 0,        // PC #0
+        "action": "play"
+      },
+      {
+        "device_in": "pedal_midi",
+        "event_in": "pc",
+        "ch_in": 15,
+        "value_1_in": 1,        // PC #1
+        "action": "stop"
+      }
+      // Mapeo para "Tap Tempo" (conceptual, necesitaría más código en Python)
+      // Esto es solo para ilustrar cómo capturarías el evento.
+      // La acción "tap_tempo" no existe por defecto, tendrías que implementarla.
+      // {
+      //   "device_in": "teclado_pequeno",
+      //   "event_in": "note_on",
+      //   "ch_in": 0,
+      //   "value_1_in": 60, // Nota C3 (Do3)
+      //   "action": "tap_tempo_event" // Acción personalizada
+      // }
+    ],
+    "clock_settings": {
+      "default_bpm": 100.0
+      // No se especifica 'device_out' aquí, así que dependerá de la selección interactiva
+      // o de los argumentos --virtual-ports. Si quieres forzar salidas sin interacción
+      // y sin --virtual-ports, tendrías que listarlos.
+      // Sin embargo, MIDImaster actualmente no soporta especificar una *lista* de device_out
+      // en clock_settings. La selección interactiva o --virtual-ports son la forma de tener múltiples.
+      // "device_out" en clock_settings solo define *un* puerto por defecto si no hay otros.
+    }
+  }

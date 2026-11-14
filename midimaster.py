@@ -21,7 +21,7 @@ from prompt_toolkit.key_binding import KeyBindings
 from pythonosc import dispatcher, osc_server, udp_client
 
 # --- Global Configuration ---
-RULES_DIR_NAME = "rules_midimaster"
+RULES_DIR_NAME = "rules"
 RULES_DIR = Path(f"./{RULES_DIR_NAME}")
 SHUTDOWN_FLAG = False
 DEFAULT_BPM = 120.0
@@ -35,6 +35,8 @@ class PerformanceState:
         self.bpm_input_buffer = ""
         self.bpm_locked = False
         self.output_ports = []
+        self.input_device_name = "Ninguno"
+        self.clock_input_device_name = "Ninguno"
         self.virtual_port_name = None
         self.last_feedback_message = ""
         self.feedback_message_time = 0
@@ -53,6 +55,8 @@ osc_server_thread = None
 # --- Mapeo de MIDI ---
 global_device_aliases = {}
 midi_filters = []
+midi_input_ports = {}
+midi_clock_input_ports = {}
 
 # --- Helper Functions ---
 def signal_handler(sig, frame):
@@ -290,73 +294,98 @@ def osc_server_handler(server):
 # --- UI Functions (prompt_toolkit) ---
 # (get_status_text, get_feedback_line_text, build_key_bindings permanecen iguales)
 def get_status_text():
+    # Información de puertos de salida
     ports_str_list = []
     if performance_state.virtual_port_name:
         ports_str_list.append(f"Virtual: {performance_state.virtual_port_name}")
     ports_str_list.extend([port.name for port in performance_state.output_ports if port.name != performance_state.virtual_port_name]) # Evitar duplicados si el virtual está en la lista
-
     ports_display = ", ".join(ports_str_list) if ports_str_list else "Ninguno"
 
+    # Información de puerto de entrada
+    input_display = performance_state.input_device_name if performance_state.input_device_name else "Ninguno"
 
-    status_line = f"Salida: {ports_display}\n"
-    status_line += f"Estado: {performance_state.status.upper()}\n"
+    status_line = f"Entrada:  {input_display}\n"
+    status_line += f"Salida:   {ports_display}\n"
+    status_line += f"Estado:   {performance_state.status.upper()}\n"
     
     bpm_display = f"{performance_state.bpm:.2f}"
     if len(performance_state.bpm_input_buffer) > 0:
-        bpm_display += f" (Entrada: {performance_state.bpm_input_buffer})" # Corrección aquí
+        bpm_display += f" (Entrada: {performance_state.bpm_input_buffer})"
     if performance_state.bpm_locked:
         bpm_display += " [BLOQUEADO]"
-    status_line += f"BPM:    {bpm_display}"
+    status_line += f"BPM:      {bpm_display}"
     return HTML(status_line)
 
 def get_feedback_line_text():
     if performance_state.last_feedback_message and \
        (time.time() - performance_state.feedback_message_time < performance_state.feedback_message_duration):
         return HTML(f"\n<i>{performance_state.last_feedback_message}</i>")
-    return HTML("\n ") 
+    return HTML("\n ")
+
+def get_selector_window_text():
+    if selector_state['active']:
+        return get_selector_text()
+    return HTML("") 
 
 def build_key_bindings():
     kb = KeyBindings()
 
     @kb.add('escape', eager=True) 
+    def _(event):
+        if selector_state['active']:
+            handle_selector_cancel()
+        else:
+            global SHUTDOWN_FLAG
+            SHUTDOWN_FLAG = True
+            set_feedback_message("Saliendo...")
+            if event.app: # Asegurarse de que app existe
+                event.app.exit(result="quit")
+    
     @kb.add('q', eager=True)
     def _(event):
-        global SHUTDOWN_FLAG
-        SHUTDOWN_FLAG = True
-        set_feedback_message("Saliendo...")
-        if event.app: # Asegurarse de que app existe
-            event.app.exit(result="quit")
+        if not selector_state['active']:
+            global SHUTDOWN_FLAG
+            SHUTDOWN_FLAG = True
+            set_feedback_message("Saliendo...")
+            if event.app: # Asegurarse de que app existe
+                event.app.exit(result="quit")
 
     for i in range(10):
         digit_char = str(i)
         @kb.add(digit_char)
         def _(event, captured_digit=digit_char): # Usar un nombre diferente para la variable capturada
-            if not performance_state.bpm_locked:
-                performance_state.bpm_input_buffer += captured_digit
-                if len(performance_state.bpm_input_buffer) == 3:
-                    try:
-                        new_bpm_val = float(performance_state.bpm_input_buffer)
-                        set_bpm(new_bpm_val)
-                    except ValueError:
-                        set_feedback_message(f"Entrada BPM inválida: {performance_state.bpm_input_buffer}")
-                    performance_state.bpm_input_buffer = ""
-                elif len(performance_state.bpm_input_buffer) > 3: 
-                    performance_state.bpm_input_buffer = captured_digit 
-            else:
-                set_feedback_message(f"BPM bloqueado. '{captured_digit}' ignorado.")
+            if not selector_state['active']:
+                if not performance_state.bpm_locked:
+                    performance_state.bpm_input_buffer += captured_digit
+                    if len(performance_state.bpm_input_buffer) == 3:
+                        try:
+                            new_bpm_val = float(performance_state.bpm_input_buffer)
+                            set_bpm(new_bpm_val)
+                        except ValueError:
+                            set_feedback_message(f"Entrada BPM inválida: {performance_state.bpm_input_buffer}")
+                        performance_state.bpm_input_buffer = ""
+                    elif len(performance_state.bpm_input_buffer) > 3: 
+                        performance_state.bpm_input_buffer = captured_digit 
+                else:
+                    set_feedback_message(f"BPM bloqueado. '{captured_digit}' ignorado.")
 
 
     @kb.add('+')
-    def _(event): set_bpm(performance_state.bpm + 1)
+    def _(event): 
+        if not selector_state['active']:
+            set_bpm(performance_state.bpm + 1)
 
     @kb.add('-')
-    def _(event): set_bpm(performance_state.bpm - 1)
+    def _(event): 
+        if not selector_state['active']:
+            set_bpm(performance_state.bpm - 1)
     
     @kb.add('b')
     def _(event):
-        performance_state.bpm_locked = not performance_state.bpm_locked
-        lock_status = "BLOQUEADO" if performance_state.bpm_locked else "DESBLOQUEADO"
-        set_feedback_message(f"Control BPM: {lock_status}")
+        if not selector_state['active']:
+            performance_state.bpm_locked = not performance_state.bpm_locked
+            lock_status = "BLOQUEADO" if performance_state.bpm_locked else "DESBLOQUEADO"
+            set_feedback_message(f"Control BPM: {lock_status}")
 
     @kb.add('c-c', eager=True)
     def _(event):
@@ -369,14 +398,27 @@ def build_key_bindings():
     @kb.add(' ')
     @kb.add('c')
     def _(event):
-        if performance_state.status == "PLAYING":
-            pause_clock()
-        else: 
-            play_clock()
+        if not selector_state['active']:
+            if performance_state.status == "PLAYING":
+                pause_clock()
+            else: 
+                play_clock()
     
+    @kb.add('up')
+    def _(event):
+        if selector_state['active']:
+            handle_selector_up()
+
+    @kb.add('down')
+    def _(event):
+        if selector_state['active']:
+            handle_selector_down()
+
     @kb.add('enter')
     def _(event):
-        if performance_state.bpm_input_buffer:
+        if selector_state['active']:
+            handle_selector_select()
+        elif not selector_state['active'] and performance_state.bpm_input_buffer:
             try:
                 new_bpm_val = float(performance_state.bpm_input_buffer)
                 set_bpm(new_bpm_val)
@@ -384,22 +426,32 @@ def build_key_bindings():
                 set_feedback_message(f"Entrada BPM inválida: {performance_state.bpm_input_buffer}")
             finally:
                 performance_state.bpm_input_buffer = ""
-        elif performance_state.status == "PLAYING" or performance_state.status == "PAUSED":
+        elif not selector_state['active'] and (performance_state.status == "PLAYING" or performance_state.status == "PAUSED"):
             stop_clock()
             # Si se quiere que Enter desde Pausa también reinicie:
             # if performance_state.status == "PAUSED": play_clock() # Esto lo reiniciaría
-        else: # STOPPED
+        elif not selector_state['active']: # STOPPED
             play_clock()
 
     @kb.add('p')
     def _(event):
-        if performance_state.status != "PLAYING":
+        if not selector_state['active'] and performance_state.status != "PLAYING":
             play_clock()
 
     @kb.add('s')
     def _(event):
-        if performance_state.status != "STOPPED":
+        if not selector_state['active'] and performance_state.status != "STOPPED":
             stop_clock()
+
+    @kb.add('i')
+    def _(event):
+        if not selector_state['active']:
+            change_input_device()
+    
+    @kb.add('o')
+    def _(event):
+        if not selector_state['active']:
+            change_output_device()
             
     return kb
 
@@ -577,6 +629,120 @@ def interactive_port_selector(available_ports, prompt_title="Selecciona puertos 
         return None 
     return selected_names
 
+# Variables globales para el selector modal
+selector_state = {
+    'active': False,
+    'type': None,  # 'input' or 'output'
+    'selection_index': 0,
+    'available_devices': []
+}
+
+def get_selector_text():
+    if not selector_state['active']:
+        return ""
+    
+    devices = selector_state['available_devices']
+    device_type = "ENTRADA" if selector_state['type'] == 'input' else "SALIDA"
+    
+    text_parts = []
+    text_parts.append(f"<b>Seleccionar puerto de {device_type} MIDI</b>\n")
+    text_parts.append("(↑↓: navegar, Enter: seleccionar, Esc: cancelar)\n")
+    text_parts.append("-" * 50 + "\n")
+    
+    for i, device_name in enumerate(devices):
+        if i == selector_state['selection_index']:
+            text_parts.append(f"<style bg='ansiblue' fg='ansiwhite'>> {device_name}</style>\n")
+        else:
+            text_parts.append(f"  {device_name}\n")
+    
+    text_parts.append("-" * 50)
+    return HTML("".join(text_parts))
+
+def activate_input_selector():
+    available_inputs = mido.get_input_names()
+    if not available_inputs:
+        set_feedback_message("No hay puertos MIDI de entrada disponibles.")
+        return
+    
+    selector_state['active'] = True
+    selector_state['type'] = 'input'
+    selector_state['selection_index'] = 0
+    selector_state['available_devices'] = available_inputs
+
+def activate_output_selector():
+    available_outputs = mido.get_output_names()
+    if not available_outputs:
+        set_feedback_message("No hay puertos MIDI de salida disponibles.")
+        return
+    
+    selector_state['active'] = True
+    selector_state['type'] = 'output'
+    selector_state['selection_index'] = 0
+    selector_state['available_devices'] = available_outputs
+
+def handle_selector_up():
+    if selector_state['active']:
+        devices_count = len(selector_state['available_devices'])
+        selector_state['selection_index'] = (selector_state['selection_index'] - 1 + devices_count) % devices_count
+
+def handle_selector_down():
+    if selector_state['active']:
+        devices_count = len(selector_state['available_devices'])
+        selector_state['selection_index'] = (selector_state['selection_index'] + 1) % devices_count
+
+def handle_selector_select():
+    global midi_input_ports, performance_state
+    if not selector_state['active']:
+        return
+    
+    selected_device = selector_state['available_devices'][selector_state['selection_index']]
+    device_type = selector_state['type']
+    
+    if device_type == 'input':
+        # Cambiar puerto de entrada
+        for port_obj in midi_input_ports.values():
+            try:
+                if not port_obj.closed: port_obj.close()
+            except Exception: pass
+        midi_input_ports.clear()
+        
+        try:
+            callback_func = lambda msg, name=selected_device: global_midi_callback(msg, name)
+            port = mido.open_input(selected_device, callback=callback_func)
+            midi_input_ports[selected_device] = port
+            performance_state.input_device_name = selected_device
+            set_feedback_message(f"Puerto de entrada cambiado a: {selected_device}")
+        except Exception as e:
+            set_feedback_message(f"Error abriendo puerto de entrada '{selected_device}': {e}")
+    
+    elif device_type == 'output':
+        # Cambiar puerto de salida
+        ports_to_close = list(performance_state.output_ports)
+        performance_state.output_ports.clear()
+        for port in ports_to_close:
+            try:
+                if hasattr(port, 'panic'): port.panic()
+                if not port.closed: port.close()
+            except Exception: pass
+        
+        try:
+            port = mido.open_output(selected_device)
+            performance_state.output_ports = [port]
+            set_feedback_message(f"Puerto de salida cambiado a: {selected_device}")
+        except Exception as e:
+            set_feedback_message(f"Error abriendo puerto de salida '{selected_device}': {e}")
+    
+    selector_state['active'] = False
+
+def handle_selector_cancel():
+    selector_state['active'] = False
+
+def change_input_device():
+    activate_input_selector()
+
+def change_output_device():
+    activate_output_selector()
+
 # --- Main Application ---
 def main():
     global SHUTDOWN_FLAG, performance_state, midi_clock_thread, app_ui_instance
@@ -607,10 +773,23 @@ def main():
     selected_port_names = []
     port_name_from_json = None
 
+    # Determinar qué archivo de reglas usar
+    rule_file_to_use = None
     if args.rule_file:
-        file_path = RULES_DIR / f"{args.rule_file}.json"
+        rule_file_to_use = args.rule_file
+    else:
+        # Si no se especifica archivo, intentar usar default.json
+        default_path = RULES_DIR / "default.json"
+        if default_path.exists():
+            rule_file_to_use = "default"
+
+    if rule_file_to_use:
+        file_path = RULES_DIR / f"{rule_file_to_use}.json"
         if load_rule_file(file_path):
-            print(f"Archivo de reglas '{file_path.name}' cargado.")
+            if args.rule_file:
+                print(f"Archivo de reglas '{file_path.name}' cargado.")
+            else:
+                print(f"Usando archivo de reglas por defecto '{file_path.name}'.")
             # Intentar resolver el puerto desde el JSON antes de mostrar el selector
             if hasattr(performance_state, 'default_device_out_alias_from_json'):
                 alias = performance_state.default_device_out_alias_from_json
@@ -693,7 +872,6 @@ def main():
     midi_clock_thread.start()
 
     # Abrir puertos de entrada MIDI con callbacks si hay mapeos
-    midi_input_ports = {}
     if midi_filters:
         required_dev_aliases = {m.get("device_in") for m in midi_filters if m.get("device_in")}
         
@@ -706,22 +884,36 @@ def main():
                     callback_func = lambda msg, name=port_name: global_midi_callback(msg, name)
                     port = mido.open_input(port_name, callback=callback_func)
                     midi_input_ports[port_name] = port
+                    performance_state.input_device_name = port_name  # Actualizar el estado
                     print(f"Puerto de entrada '{port_name}' para mapeos abierto.")
                 except Exception as e:
                     print(f"Error abriendo puerto de entrada '{port_name}': {e}")
     
 
-    status_window = Window(content=FormattedTextControl(text=get_status_text, focusable=False), height=4, style="bg:#444444 #ffffff")
+    status_window = Window(content=FormattedTextControl(text=get_status_text, focusable=False), height=5, style="bg:#444444 #ffffff")
     feedback_window = Window(content=FormattedTextControl(text=get_feedback_line_text, focusable=False), height=2, style="bg:#222222 #aaaaaa")
+    def get_selector_height():
+        if not selector_state['active']:
+            return 0
+        # 3 líneas para el header + número de dispositivos + 1 línea para el footer
+        return min(15, 4 + len(selector_state['available_devices']))
     
-    layout = Layout(HSplit([status_window, feedback_window]))
+    selector_window = Window(
+        content=FormattedTextControl(text=get_selector_window_text, focusable=False), 
+        height=get_selector_height, 
+        style="bg:#333333 #ffff00"
+    )
+    
+    layout = Layout(HSplit([status_window, feedback_window, selector_window]))
     kb = build_key_bindings()
     
     global app_ui_instance
     app_ui_instance = Application(layout=layout, key_bindings=kb, full_screen=False, refresh_interval=0.1, mouse_support=False)
 
     print("\nIniciando interfaz de midimaster...")
-    print("Controles: Números (BPM), +/- (BPM), Espacio/c (Play/Pause), Enter (Play/Stop), p (Play), s (Stop), b (Bloqueo BPM), q/Esc (Salir)")
+    print("Controles:")
+    print("  Números (BPM), +/- (BPM), Espacio/c (Play/Pause), Enter (Play/Stop)")
+    print("  p (Play), s (Stop), b (Bloqueo BPM), i (Entrada), o (Salida), q/Esc (Salir)")
     
     try:
         app_ui_instance.run()
